@@ -1,5 +1,5 @@
-const V = 'money-testv1b|' + self.registration.scope;
-const CORE = ['./', './index.html', './config.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
+const V = 'money-v3-demo-20261019a|' + self.registration.scope;
+const CORE = ['./','./index.html','./config.js','./demo.json','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 const CDN = /^https:\/\/(www\.gstatic\.com\/firebasejs\/|cdnjs\.cloudflare\.com\/ajax\/libs\/)/;
 
 self.addEventListener('install', e => {

@@ -1,3 +1,3 @@
-// Money 展示版（Test V1）：不用 Firebase、不用登入，資料是 demo.json 的虛構資料
+// V3 Demo 完全離線，無 Firebase。勿加入正式版憑證。
 window.FIREBASE_CONFIG = null;
-window.MONEY_OPTIONS = {demo:true, carrier:false};
+window.MONEY_OPTIONS = {demo:true};
