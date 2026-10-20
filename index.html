@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Money">
 <meta name="theme-color" content="#FFF8FB">
-<title>Money V3 展示版</title>
+<title>Money</title>
 <link rel="apple-touch-icon" id="touchIcon">
 <link rel="icon" id="favIcon">
 <link rel="manifest" href="manifest.webmanifest">
@@ -81,7 +81,7 @@ nav .fab{width:54px;height:54px;border-radius:18px;background:var(--acc);color:#
 .kv small{display:block;color:var(--tx2);font-size:12px}
 .kv b{font-size:16px}
 /* layers */
-#layers .layer{position:fixed;inset:0;z-index:50;display:flex;flex-direction:column;opacity:0;transition:opacity .18s}
+#layers .layer{position:fixed;inset:0;z-index:50;display:flex;flex-direction:column;opacity:0;transition:opacity .12s}
 #layers .layer.on{opacity:1}
 .layer.full{background:var(--bg)}
 .layer.full .lin{max-width:520px;width:100%;margin:0 auto;height:100%;display:flex;flex-direction:column}
@@ -332,25 +332,27 @@ html,body{overflow-x:clip}
 .layer .fscroll{overflow-x:hidden}
 
 
-/* Money V3 Demo 固定導覽及展示標示：所有頁面、子層共用 */
-#demoBanner{position:fixed;top:0;left:0;right:0;z-index:460;min-height:47px;display:flex;align-items:center;justify-content:center;gap:8px;padding:6px max(12px,env(safe-area-inset-right)) 6px max(12px,env(safe-area-inset-left));background:#F58EB3;color:#34202C;box-shadow:0 2px 10px rgba(86,32,58,.12);font-size:13px;font-weight:800}
-#demoBanner small{font-size:10px;font-weight:600;opacity:.85;white-space:nowrap}
-#demoBanner button{margin-left:auto;flex-shrink:0;background:#fff;color:#9A3459;border-radius:10px;padding:8px 12px;font-weight:800;font-size:13px;box-shadow:0 1px 3px rgba(40,15,30,.1)}
-body{padding-top:47px!important}
-#layers .layer{top:47px!important}
-#lock{top:47px!important}
-#demoBanner + #app{position:relative}
-@media(max-width:390px){#demoBanner{gap:5px;font-size:12px;padding-left:7px;padding-right:7px}#demoBanner small{font-size:9px}#demoBanner button{padding:7px 9px}}
-@media(min-width:1000px){#demoBanner{padding-left:100px}}
+/* 備註自適應：預設兩行，第三行起自動增高，最多八行可內捲 */
+textarea.note{
+  line-height:1.55;
+  min-height:0;
+  height:auto;
+  max-height:none;
+  overflow-y:hidden;
+  overflow-x:hidden;
+  resize:none;
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+  box-sizing:border-box;
+}
 </style>
-
-
-
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
-
+<script src="config.js"></script>
 </head>
 <body>
-<div id="demoBanner" role="region" aria-label="Money 展示版"><span>Money V3｜展示版</span><small>虛擬資料・歡迎自由操作</small><button type="button" onclick="demoReset()">↻ 重置</button></div>
 <div id="app"></div>
 <nav id="nav"></nav>
 <div id="layers"></div>
@@ -380,9 +382,9 @@ body{padding-top:47px!important}
    }
    ========================================================= */
 // 功能開關：可在 config.js 用 window.MONEY_OPTIONS 設定（v2.5 起載具功能已移除）
-const FEAT = {...(window.MONEY_OPTIONS || {}), demo:true};
+const FEAT = {...(window.MONEY_OPTIONS || {})};
 // 雲端設定放在同資料夾的 config.js（換人使用時只要改那個檔）
-const FIREBASE_CONFIG = null; // 展示版強制離線隔離，永不連接正式帳本
+const FIREBASE_CONFIG = (window.FIREBASE_CONFIG && window.FIREBASE_CONFIG.apiKey) ? window.FIREBASE_CONFIG : null;
 /* 範例：
 const FIREBASE_CONFIG = {
   apiKey: "...",
@@ -393,7 +395,7 @@ const FIREBASE_CONFIG = {
   appId: "..."
 };
 */
-const VERSION = 'V3.1';
+const VERSION = 'V3.7';
 
 /* ---------- utils ---------- */
 const $ = s => document.querySelector(s);
@@ -530,7 +532,7 @@ const S = {
 };
 // 同一網域放多份 Money（例如 GitHub Pages 的不同倉庫）時，各自的設定分開存，不互相干擾
 const STORE_NS = (() => { const d = location.pathname.replace(/[^/]*$/, ''); return d === '/' ? '' : '@' + d; })();
-const PREF_KEY = 'money_v3_demo_prefs' + STORE_NS, LOCAL_KEY = 'money_v3_demo_local' + STORE_NS, RATE_KEY = 'money_v3_demo_rates' + STORE_NS;
+const PREF_KEY = 'money_prefs' + STORE_NS, LOCAL_KEY = 'money_local_v1' + STORE_NS, RATE_KEY = 'money_rates';
 let P = {mode:'time', darkFrom:'22:00', darkTo:'08:00', lastCat:{}, lastAcc:null};
 try { Object.assign(P, JSON.parse(localStorage.getItem(PREF_KEY) || '{}')); } catch(e){}
 if ('carrier' in P) { delete P.carrier; try { localStorage.setItem(PREF_KEY, JSON.stringify(P)); } catch(e){} }   // v2.5：載具移除，清掉本機舊號碼
@@ -543,23 +545,6 @@ let db = null, auth = null, ledgerRef = null, unsubs = [];
 let VER = 0; const bump = () => { VER++; snapSave(); };
 
 /* ---------- store ---------- */
-/* 展示版資料使用專用本機儲存。重置僅清除本展示版本機鍵值。 */
-function demoReset(){
-  if (!confirm('確定要重置展示版嗎？\n所有展示時新增、修改、刪除的內容都會清除，恢復最初的五年虛擬資料。')) return;
-  try { localStorage.removeItem(LOCAL_KEY); localStorage.removeItem(PREF_KEY); } catch(e){}
-  location.reload();
-}
-async function demoSeed(){
-  const r = await fetch('./demo.json',{cache:'no-store'});
-  if (!r.ok) throw new Error('demo.json 讀取失敗，HTTP '+r.status);
-  const o = await r.json();
-  if (!o || !o.data || Object.keys(o.data.txns||{}).length < 5000) throw new Error('展示資料不完整');
-  S.data = {...emptyData(), ...o.data};
-  S.settings = {...S.settings,...(o.settings||{})};
-  delete S.settings.carrier;
-  // 為穩定重複展示，採固定五年時段與金額，重置必定回到相同數據
-  saveLocal();
-}
 function readLocal(){ try { return JSON.parse(localStorage.getItem(LOCAL_KEY)); } catch(e){ return null; } }
 function saveLocal(){ if (S.mode !== 'local') return; try { localStorage.setItem(LOCAL_KEY, JSON.stringify({data:S.data, settings:S.settings})); } catch(e){ toast('儲存空間不足'); } }
 /* 雲端還在連線時先記下來，連上後自動補送 */
@@ -641,7 +626,7 @@ function aprFees(P, n, apr, pays){
   for (let k = 0; k < n; k++) { const i = k === n - 1 ? rd2(pays[k] - bal) : Math.round(bal * r); if (i < 0 || i > pays[k]) return null; fs.push(i); bal = rd2(bal - (pays[k] - i)); }
   return fs;
 }
-/* 分期「每期金額（照銀行）」：有填就每期用銀行金額（首期可另填），合計跟總額的差：有填首期→最後一期補，沒填→首期補 */
+/* 分期「每期金額（含利息，照銀行）」：有填就每期用銀行金額（首期可另填），合計跟總額的差：有填首期→最後一期補，沒填→首期補 */
 function instPays(tot, n, per, first){
   per = +per || 0; first = +first || 0; if (!(per > 0) || n < 2) return null;
   const ps = Array.from({length:n}, (_, k) => k === 0 && first > 0 ? first : per), j = first > 0 ? n - 1 : 0;
@@ -824,7 +809,19 @@ function cycleRaw(a, close, next){
   const r = {stmt, paid, post, unbilled, nextInst}; CYM.m.set(key, r); return r;
 }
 /* v2.31 可用額度：銀行只扣本金，還沒入帳的分期利息不扣 */
-function unbilledFee(a, close){ let f = 0; for (const x of cardPieces(a)) if (x.p.date > close && !x.p.payoff) f += x.p.fee; return f; }
+function unbilledFee(a, close){
+  // V3.1 額度修正：此函式只影響「未入帳利息不占額度」，不變更結帳與分期帳單。
+  const td = today(), next = closeAdd(a, close, 1);
+  let f = 0;
+  for (const x of cardPieces(a)) {
+    const p = x.p;
+    if (p.payoff || !(p.fee > 0)) continue;
+    // 消費分期有明確每期銀行入帳日：僅銀行尚未入帳的利息不扣額度。
+    // 帳單分期／舊分期及未填每期入帳日：下一期視為已入帳，只排除更後期的利息。
+    if (p.post ? p.post > td : p.date > next) f += p.fee;
+  }
+  return f;
+}
 /* 「以帳單為準」每期分開記（stmtOverrides[結帳日]），舊資料的 stmtOverride 也讀得到 */
 function ovOf(a, close){ const h = a.stmtOverrides || {}; if (h[close] !== undefined && h[close] !== null) return +h[close] || 0; return a.stmtOverride && a.stmtOverride.close === close ? +a.stmtOverride.amount || 0 : null; }
 /* 某期帳單的繳款＝結帳日隔天到下一個結帳日之間轉進這張卡的錢 */
@@ -905,16 +902,22 @@ function openLayer(key, fn, cls='full', mount){
   if (cls === 'full') el.addEventListener('click', e => { if (e.target !== el || innerWidth < 1000) return; if (key === 'add' && hasDraft() && !confirm('放棄這筆還沒存的紀錄？')) return; closeLayer(key); });
   requestAnimationFrame(() => el.classList.add('on'));
 }
-function drawLayer(L){ L.el.innerHTML = L.fn(); L.mount && L.mount(L.el); }
+function drawLayer(L){ L.el.innerHTML = L.fn(); L.mount && L.mount(L.el); L.el.querySelectorAll('textarea.note').forEach(fitNoteHeight); }
 function redraw(key){ const L = LAYERS.find(l => l.key === key); if (!L) return; const old = L.el.querySelector('.fscroll,.bdy'); const y = old ? old.scrollTop : 0; drawLayer(L); const next = L.el.querySelector('.fscroll,.bdy'); if (next) next.scrollTop = y; }
 function closeLayer(key, instant){
   const i = key ? LAYERS.findIndex(l => l.key === key) : LAYERS.length - 1;
   if (i < 0) return;
   const [L] = LAYERS.splice(i, 1);
   if (instant) L.el.remove();
-  else { L.el.classList.remove('on'); L.el.style.pointerEvents = 'none'; setTimeout(() => L.el.remove(), 180); }
+  else { L.el.classList.remove('on'); L.el.style.pointerEvents = 'none'; setTimeout(() => L.el.remove(), 120); }
 }
-const sheet = (key, title, body) => `<div class="bd" onclick="closeLayer('${key}')"></div><div class="sh"><div class="hd"><span>${title}</span><button class="mini" onclick="closeLayer('${key}')">${ic('x',20)}</button></div><div class="bdy">${body}</div></div>`;
+function layerBack(key){
+  const top = LAYERS[LAYERS.length - 1];
+  if (!top) return goBack();
+  if (top.key === key) return goBack();
+  return false; // 背景層按鈕不影響前景子層
+}
+const sheet = (key, title, body) => `<div class="bd" onclick="layerBack('${key}')"></div><div class="sh"><div class="hd"><span>${title}</span><button class="mini" onclick="layerBack('${key}')">${ic('x',20)}</button></div><div class="bdy">${body}</div></div>`;
 
 /* ---------- render ---------- */
 function render(){
@@ -926,7 +929,7 @@ function render(){
   $('#app').innerHTML = cols ? `<div class="colw">${v()}</div>` : v();
   renderNav(); NAVCUR = navSnap();
   if (NAVSTK.length && NAVSTK[NAVSTK.length - 1].link && S.ui.tab !== 'acct') { const t = $('#app .top'); if (t && t.firstElementChild) { const h = t.firstElementChild, w = document.createElement('div');
-    w.style.cssText = 'display:flex;align-items:center;gap:2px;min-width:0'; w.innerHTML = `<button class="ib" onclick="goBack()" aria-label="返回">${ic('left',24)}</button>`; t.insertBefore(w, h); w.appendChild(h); } }
+    w.style.cssText = 'display:flex;align-items:center;gap:2px;min-width:0'; w.innerHTML = `<button class="ib" onclick="goBack(true)" aria-label="返回">${ic('left',24)}</button>`; t.insertBefore(w, h); w.appendChild(h); } }
   if (S.ui.tab === 'accounts' && S.ui.sorting) mountSort();
   if (S.ui.tab === 'home') mountSwipe();
 }
@@ -948,7 +951,7 @@ function navPush(tab){
 }
 let NAVTAB = false;
 function navTab(tab){ if (tab === S.ui.tab) { scrollTo(0, 0); return; } NAVTAB = true; navPush(tab); NAVTAB = false; go(tab, true); }   // v2.41：底部選單切頁也記，返回回上一頁
-function go(tab, noPush){ if (!noPush) navPush(tab); S.ui.tab = tab; S.ui.sorting = false; if (location.hash) history.replaceState(null, '', location.pathname + location.search); render(); scrollTo(0, 0); }
+function go(tab, noPush){ if (!noPush) navPush(tab); S.ui.tab = tab; S.ui.sorting = false; if (location.hash) history.replaceState(history.state || {guard:1}, '', location.pathname + location.search); render(); scrollTo(0, 0); }
 
 /* ---------- home ---------- */
 function catOf(id){ return S.data.categories[id]; }
@@ -1172,7 +1175,7 @@ function viewAcct(){
       <div><small>現在匯率</small><b>${cr.toFixed(4)}</b></div><div><small>平均成本匯率</small><b>${av.toFixed(4)}</b></div>
       <div><small>現值</small><b>${twd(b * cr)}</b></div><div><small>匯差</small><b class="${gain < 0 ? 'exp' : 'inc'}">${twd(gain, true)}</b></div></div></div>`;
   }
-  return `<div class="top"><button class="ib" onclick="goBack()">${ic('left',24)}</button><h1 style="flex:1;font-size:19px">${esc(a.name)}</h1>
+  return `<div class="top"><button class="ib" onclick="goBack(true)">${ic('left',24)}</button><h1 style="flex:1;font-size:19px">${esc(a.name)}</h1>
       <button class="ib" onclick="openAcctForm('${a.id}')">${ic('edit',22)}</button></div>
     ${ci ? '' : `<div class="card tap" onclick="openAcctForm('${a.id}')"><small class="tx2">${TYPES[a.type]?.[0] || ''} · ${a.currency}${a.archived ? ' · 已封存' : ''} · 校正餘額 ›</small>
       <div style="font-size:30px;font-weight:800;margin-top:4px" class="${b < 0 ? 'exp' : ''}">${fmt(b, a.currency)}</div>
@@ -1237,6 +1240,31 @@ function openRebate(aid, close){
   else put('txns', {...(auto || {}), id:auto ? auto.id : 't_' + uid(), type:'income', amount:need, accountId:aid, catId:cat, date:close, note:'回饋折抵（帳單）', rebateFor:close, projectId:null, createdAt:auto ? auto.createdAt : Date.now()}, true);
   render(); redraw('stmt'); redraw('debt'); if (need > 0) toast(`已記回饋 ${nf(need)}（${md(close)}）`);
 }
+/* V3.3：分期顯示層共用，僅讀取現有每期本金與利息。 */
+function instSplitSub33(p, cur){
+  return p && p.fee > 0.005 ? `<small>本金 ${fmt(p.amt,cur)}・利息 ${fmt(p.fee,cur)}（已含於合計）</small>` : '';
+}
+let INST_DETAILS_33 = false;
+function instDisclosure33(pieces,cur){
+  if (!INST_DETAILS_33 || !pieces || !pieces.length) return '';
+  return `<div class="card" style="overflow-x:auto;margin-top:4px"><table class="tbl"><thead><tr><th>帳單</th><th>本金</th><th>利息</th><th>合計</th></tr></thead><tbody>${pieces.map(p=>`<tr><td>${esc(p.date.slice(0,7).replace('-','/'))}</td><td>${fmt(p.amt,cur)}</td><td>${fmt(p.fee,cur)}</td><td><b>${fmt(p.amt+p.fee,cur)}</b></td></tr>`).join('')}</tbody></table></div>`;
+}
+function toggleInstDetails33(){ INST_DETAILS_33 = !INST_DETAILS_33; redraw('add'); }
+function instPreviewDetail33(a,amt,fee,per,first,n){
+  if(!(n>1) || !(amt>0)) return '';
+  const totalFee=per>0 && !(fee>0) ? rd2((first>0?first:per)+per*(n-1)-amt) : fee;
+  if(totalFee<0) return '';
+  const effectivePer=per>0 ? per : (amt+totalFee)/n;
+  const pays=per>0?instPays(amt+totalFee,n,per,first):null;
+  const inferred=pays?impliedApr(amt,pays):0;
+  const hint= !evalExpr(F.instAprExpr) && inferred>0 ? `<div class="hint" style="margin-top:0">參考年利率：約 ${inferred.toFixed(2)}%（依每期金額反推，僅供對照，不回填）</div>` : '';
+  let table='';
+  if(INST_DETAILS_33){
+    const tmp={id:'preview33',type:'expense',amount:amt,accountId:a.id,date:F.date,nextBill:F.nextBill,inst:{n,fee:totalFee,per:per>0?per:undefined,first:first>0?first:undefined,apr:evalExpr(F.instAprExpr)||undefined,postDay:+F.instPostDay||undefined}};
+    table=instDisclosure33(instPieces(tmp),a.currency);
+  }
+  return `${hint}<div style="margin:0 16px 8px"><button type="button" class="btn sec2" style="padding:10px" onclick="toggleInstDetails33()">每期明細 ${INST_DETAILS_33?'⌃':'›'}</button></div>${table}`;
+}
 /* ---------- 本期帳單明細 ---------- */
 let STM = null;
 function payStmt(aid, amt){   // v2.37：帳單直接記繳款（銀行 → 這張卡）
@@ -1276,7 +1304,7 @@ function renderStmt(){
     if (x.p) { if (pl) { title = pl.name || '帳單分期'; sub.push(x.p.payoff ? '提前結清' : `${x.p.k + 1}/${pl.n} 期`); } else { title = catOf(t.catId)?.name || '分期'; sub.push(x.p.payoff ? `提前結清（${t.inst.n} 期）` : `${x.p.k + 1}/${t.inst.n} 期`); if (t.note) sub.push(t.note.split('\n')[0]); sub.push('刷卡 ' + md(t.date)); if (x.p.post) sub.push('入帳 ' + md(x.p.post)); } }
     else if (pl) { title = pl.name || '帳單分期'; sub.push('整期轉分期，從這期帳單移出'); }
     else { title = t.type === 'transfer' ? `${S.data.accounts[t.accountId]?.name || '?'} → ${S.data.accounts[t.toAccountId]?.name || '?'}` : (catOf(t.catId)?.name || '未分類'); if (t.store) title = t.store + '・' + title; if (t.note) sub.push(t.note.split('\n')[0]); sub.unshift(x.post && x.post !== t.date ? `刷 ${md(t.date)}・入帳 ${md(x.post)}` : md(t.date)); if (t.nextBill && !t.postDate) sub.push('下期入帳'); if (t.rebateFor) sub.push('本期折抵'); }
-    return `<button class="row" onclick="${click}"><span class="mid"><b>${esc(title)}</b>${sub.length ? `<small>${esc(sub.join(' · '))}</small>` : ''}</span><span class="amt">${label}${f(x.v)}</span></button>`; };
+    return `<button class="row" onclick="${click}"><span class="mid"><b>${esc(title)}</b>${sub.length ? `<small>${esc(sub.join(' · '))}</small>` : ''}${instSplitSub33(x.p,cur)}</span><span class="amt">${label}${f(x.v)}</span></button>`; };
   const sec = (k, title, sign) => d.it[k].length ? `<div class="sec"><h3>${title} <span class="sm tx2" style="font-weight:400">${d.it[k].length} 筆</span></h3><span class="sm b">${sign}${f(d.sum(k))}</span></div><div class="list">${d.it[k].sort((x, y) => { const kx = x.p ? (x.p.post || x.t?.date || x.p.date) : x.post || (x.t ? x.t.date : ''), ky = y.p ? (y.p.post || y.t?.date || y.p.date) : y.post || (y.t ? y.t.date : ''); return kx < ky ? -1 : kx > ky ? 1 : 0; }).map(x => row(x, sign)).join('')}</div>` : '';
   const far = close > closeAdd(a, cc, 1), future = close > cc, empty = !Object.values(d.it).some(l => l.length);
   return `<div class="lin"><div class="lhd"><button class="ib" onclick="closeLayer('stmt')">${ic('left',24)}</button><h2>${esc(a.name)} 帳單</h2><span style="width:40px"></span></div>
@@ -1347,7 +1375,7 @@ function renderDebt(aid){
     if (x.p) { if (pl) { title = pl.name || '帳單分期'; sub.push(x.p.payoff ? '提前結清' : `分期 ${x.p.k + 1}/${pl.n}`); } else { title = (t.store ? t.store + '・' : '') + (catOf(t.catId)?.name || '分期'); sub.push(x.p.payoff ? `提前結清（${t.inst.n} 期）` : `分期 ${x.p.k + 1}/${t.inst.n}`); if (t.note) sub.push(t.note.split('\n')[0]); sub.push('刷卡 ' + md(t.date)); } }
     else if (pl) { title = pl.name || '帳單分期'; sub.push('整期轉分期'); }
     else { title = t.type === 'transfer' ? `${S.data.accounts[t.accountId]?.name || '?'} → ${S.data.accounts[t.toAccountId]?.name || '?'}` : (t.store ? t.store + '・' : '') + (catOf(t.catId)?.name || '未分類'); sub.unshift(md(t.date)); if (t.note) sub.push(t.note.split('\n')[0]); if (t.nextBill) sub.push('商店晚請款'); }
-    return `<button class="row" onclick="${click}"><span class="mid"><b>${esc(title)}</b>${sub.length ? `<small>${esc(sub.join(' · '))}</small>` : ''}</span><span class="amt">${sign}${f(x.v)}</span></button>`; };
+    return `<button class="row" onclick="${click}"><span class="mid"><b>${esc(title)}</b>${sub.length ? `<small>${esc(sub.join(' · '))}</small>` : ''}${instSplitSub33(x.p,cur)}</span><span class="amt">${sign}${f(x.v)}</span></button>`; };
   const by = l => l.slice().sort((x, y) => ((x.p ? x.p.date : x.t ? x.t.date : '') < (y.p ? y.p.date : y.t ? y.t.date : '') ? -1 : 1));
   const curRows = [...by(cd.it.inst), ...by(cd.it.buy)].map(x => itemRow(x)).join('') + cd.it.refund.map(x => itemRow(x, '−')).join('') + cd.it.plan.map(x => itemRow(x, '−')).join('');
   const nextRows = [...by(nd.it.inst), ...by(nd.it.buy)].map(x => itemRow(x)).join('') + nd.it.refund.map(x => itemRow(x, '−')).join('') + nd.it.plan.map(x => itemRow(x, '−')).join('');
@@ -1438,12 +1466,12 @@ function renderPlan(){
   const body = `<div class="seg" style="margin-bottom:12px"><button style="flex:1" class="${!legacy ? 'on' : ''}" onclick="PF.kind='bill';redraw('plan')">整期帳單分期</button><button style="flex:1" class="${legacy ? 'on' : ''}" onclick="PF.kind='legacy';redraw('plan')">舊分期（剩幾期）</button></div>
     <div class="hint" style="margin:0 0 12px">${legacy ? '記帳開始前就有的分期，消費沒記在 App 裡。只用來讓「本期應繳」和「分期中」正確，不會算支出，也不改變欠款。' : '整期帳單（好幾筆消費合計）向銀行轉分期。消費已經記過，不會重複算支出；手續費會按月算進支出。'}</div>
     <div class="fld"><label>名稱</label><input value="${esc(f.name)}" placeholder="${legacy ? '例：iPhone 分期' : '例：9 月帳單分期'}" oninput="PF.name=this.value"></div>
-    ${legacy ? `<div class="two"><div class="fld"><label>剩餘期數</label>${inp('n', '例：4', 'numeric')}</div><div class="fld"><label>每期金額（${cur}，含手續費）</label>${inp('per', '例：2835')}</div></div>`
+    ${legacy ? `<div class="two"><div class="fld"><label>剩餘期數</label>${inp('n', '例：4', 'numeric')}</div><div class="fld"><label>每期金額（${cur}，含利息）</label>${inp('per', '例：2835')}</div></div>`
       : `<div class="two"><div class="fld"><label>分期總額（${cur}）</label>${inp('principal', '例：50000')}</div><div class="fld"><label>期數</label>${inp('n', '例：3', 'numeric')}</div></div>
-         <div class="fld"><label>年利率 %（知道年息才填；每期金額留空會自動算）</label>${inp('apr', '例：6')}</div>
-         <div class="two"><div class="fld"><label>每期金額（照銀行）</label>${inp('per', '沒填就平均拆')}</div><div class="fld"><label>首期金額（可空白）</label>${inp('first', '跟每期不同才填')}</div></div>
+         <div class="fld"><label>年利率 %（選填；已填銀行每期金額時僅供參考）</label>${inp('apr', '例：6')}</div>
+         <div class="two"><div class="fld"><label>每期金額（含利息，照銀行）</label>${inp('per', '留空則自動平均')}<div style="margin-top:5px;color:var(--exp);font-weight:800;font-size:12px" id="planPerAvg">${(+f.principal > 0 && +f.n > 0) ? '自動每期約 ' + fmt(Math.floor((+f.principal + (+f.fee || 0)) / (+f.n)), cur) : '輸入總額與期數後自動計算'}</div></div><div class="fld"><label>首期金額（可空白）</label>${inp('first', '跟每期不同才填')}</div></div>
          <div class="fld"><label>手續費／利息總額（沒有就留空）</label>${inp('fee', '例：600')}</div>
-         <div class="hint" style="margin:-4px 0 12px">有填每期金額：手續費可留空，自動算＝各期合計－分期總額（算進「金融 > 手續費」）。</div>`}
+         <div class="hint" style="margin:-4px 0 12px">銀行每期金額優先；利率僅供參考。有填每期金額：手續費可留空，自動算＝各期合計－分期總額（算進「金融 > 手續費」）。</div>`}
     <div class="fld"><label>${legacy ? '下一期' : '第一期'}入帳月份</label><input type="month" value="${esc(f.firstMonth)}" onchange="PF.firstMonth=this.value"></div>
     <button class="btn" onclick="savePlan()">儲存</button>
     ${f.id ? `<button class="btn sec2" style="margin-top:8px" onclick="openPayoff('plan','${f.id}')">${S.data.plans[f.id]?.payoff ? `已提前結清（${md(S.data.plans[f.id].payoff.date)}）${poPending(S.data.plans[f.id].payoff) ? '・利息待確認' : ''}` : '提前結清…'}</button><button class="btn del" style="margin-top:6px" onclick="delPlan()">刪除</button>` : ''}`;
@@ -1592,11 +1620,11 @@ function storeSuggest(catId){
 function defaultAcc(){ const l = P.lastAcc; if (l && S.data.accounts[l] && !S.data.accounts[l].archived) return l; return accList()[0]?.id || null; }
 function blankF(){
   const accs = accList(), from = defaultAcc();
-  return {id:null, mode:'txn', type:'expense', catId:suggestCat() || defaultCat('expense'), amtExpr:'', toExpr:'', feeExpr:'', instN:0, instFeeExpr:'', instPerExpr:'', instFirstExpr:'', instAprExpr:'', perAuto:false, fxExpr:'', nextBill:false, postDate:'', instPostDay:0, showPer:false, repeat:'', until:'', active:'amt',
+  return {id:null, mode:'txn', type:'expense', catId:suggestCat() || defaultCat('expense'), amtExpr:'', toExpr:'', feeExpr:'', instN:0, instFeeExpr:'', instPerExpr:'', instFirstExpr:'', instAprExpr:'', perAuto:false, instPerBank:false, fxExpr:'', nextBill:false, postDate:'', instPostDay:0, showPer:false, repeat:'', until:'', active:'amt',
     date:S.ui.tab === 'home' ? S.ui.sel : today(), accountId:from, toAccountId:(accs.find(a => a.id !== from) || accs[0]).id, projectId:'', note:'', store:''};
 }
 function fFromObj(o){
-  return {type:o.type, catId:o.catId, amtExpr:exprOf(o.amount), toExpr:exprOf(o.toAmount), feeExpr:exprOf(o.fee), instN:o.inst?.n || 0, instFeeExpr:o.inst?.feeAuto ? '' : exprOf(o.inst?.fee), instPerExpr:exprOf(o.inst?.per), instFirstExpr:exprOf(o.inst?.first), instAprExpr:exprOf(o.inst?.apr), perAuto:false, fxExpr:exprOf(o.fxFee), nextBill:!!o.nextBill, postDate:o.postDate || '', instPostDay:o.inst?.postDay || (o.inst?.n > 1 && o.nextBill ? legacyPostDay(S.data.accounts[o.accountId]) : 0), showPer:false,
+  return {type:o.type, catId:o.catId, amtExpr:exprOf(o.amount), toExpr:exprOf(o.toAmount), feeExpr:exprOf(o.fee), instN:o.inst?.n || 0, instFeeExpr:o.inst?.feeAuto ? '' : exprOf(o.inst?.fee), instPerExpr:exprOf(o.inst?.per), instFirstExpr:exprOf(o.inst?.first), instAprExpr:exprOf(o.inst?.apr), perAuto:false, instPerBank:!!o.inst?.per, fxExpr:exprOf(o.fxFee), nextBill:!!o.nextBill, postDate:o.postDate || '', instPostDay:o.inst?.postDay || (o.inst?.n > 1 && o.nextBill ? legacyPostDay(S.data.accounts[o.accountId]) : 0), showPer:false,
     accountId:o.accountId, toAccountId:o.toAccountId || (accList().find(a => a.id !== o.accountId) || {}).id, projectId:o.projectId || '', note:o.note || '', store:o.store || ''};
 }
 function openAdd(id, preset){
@@ -1642,16 +1670,18 @@ function renderAdd(){
       <select class="ov" onchange="setF('accountId',this.value)">${accOpts(F.accountId)}</select></div>`;
     if (t === 'expense' && a && a.type === 'credit' && !rule) {
       const n = +F.instN || 0, opts = [...new Set([...INST_OPTS, ...(n > 1 ? [n] : [])])].sort((x, y) => x - y);
-      { const ap = evalExpr(F.instAprExpr), pa = aprPer(evalExpr(F.amtExpr), +F.instN || 0, ap); if (F.perAuto && pa) { F.instPerExpr = String(pa); F.instFirstExpr = ''; F.instFeeExpr = ''; } }
+      { const ap = evalExpr(F.instAprExpr), pa = aprPer(evalExpr(F.amtExpr), +F.instN || 0, ap); if (F.perAuto && pa && !(F.instPerBank)) { F.instPerExpr = String(pa); F.instFirstExpr = ''; F.instFeeExpr = ''; } }
       const amt = evalExpr(F.amtExpr), fee = evalExpr(F.instFeeExpr), per = evalExpr(F.instPerExpr), first = evalExpr(F.instFirstExpr), sym = CUR[cur].sym;
       const auto = n > 1 && per > 0 && !fee && amt > 0 ? rd2((first > 0 ? first : per) + per * (n - 1) - amt) : null;
       fields += `<div class="frow"><span class="lb">分期</span><span class="vl"><b class="${n > 1 ? '' : 'tx2'}">${n > 1 ? n + ' 期' : '不分期'}</b>${n > 1 && amt ? `<span class="tx2 sm">${per > 0 ? '每期 ' + fmt(per, cur) : '每期約 ' + fmt((amt + fee) / n, cur)}</span>` : ''}</span>${ic('down',16)}
         <select class="ov" onchange="setInst(this.value)"><option value="0">不分期</option>${opts.map(o => `<option value="${o}" ${o === n ? 'selected' : ''}>${o} 期</option>`).join('')}<option value="custom">自訂期數…</option></select></div>
         ${n > 1 && amt > 0 ? instPreview(a, amt, fee, per, first, n) : ''}
-        ${n > 1 ? `<div class="frow ${F.active === 'iapr' ? 'on' : ''}" onclick="setAct('iapr')"><span class="lb" style="width:auto">年利率</span><span class="vl" style="justify-content:flex-end;align-items:center;gap:8px"><b class="${F.instAprExpr ? '' : 'tx2'}">${F.instAprExpr ? esc(F.instAprExpr) + ' %' : '知道年息才填，自動算每期'}</b>${F.instAprExpr ? `<button class="tx2" style="position:relative;z-index:2" onclick="event.stopPropagation();F.instAprExpr='';F.perAuto=false;F.active='amt';redraw('add')">${ic('x',14)}</button>` : ''}</span></div>` : ''}
+        ${n > 1 && amt > 0 ? instPreviewDetail33(a,amt,fee,per,first,n) : ''}
+        ${n > 1 ? `<div class="frow ${F.active === 'iapr' ? 'on' : ''}" onclick="setAct('iapr')"><span class="lb" style="width:auto">年利率</span><span class="vl" style="justify-content:flex-end;align-items:center;gap:8px"><b class="${F.instAprExpr ? '' : 'tx2'}">${F.instAprExpr ? esc(F.instAprExpr) + ' %' : '選填；每期金額優先'}</b>${F.instAprExpr ? `<button class="tx2" style="position:relative;z-index:2" onclick="event.stopPropagation();F.instAprExpr='';F.perAuto=false;F.active='amt';redraw('add')">${ic('x',14)}</button>` : ''}</span></div>` : ''}
         ${n > 1 ? `<div class="frow ${F.active === 'ifee' ? 'on' : ''}" onclick="setAct('ifee')"><span class="lb" style="width:auto">手續費／利息</span><span class="vl" style="justify-content:flex-end"><b class="${F.instFeeExpr ? 'exp' : 'tx2'}">${F.instFeeExpr ? sym + rawFmt(F.instFeeExpr) : auto !== null ? (auto < 0 ? '每期合計比金額少' : `自動算 ${sym}${nf(auto, 2)}`) : '總額，點此輸入'}</b></span></div>` : ''}
         ${n > 1 && !(F.showPer || F.instPerExpr || F.instFirstExpr || F.instAprExpr || F.instFeeExpr) ? `<button class="sm" style="display:block;margin:-4px 20px 8px auto;color:var(--acc);font-weight:600" onclick="F.showPer=true;redraw('add')">照銀行調整每期金額 ›</button>` : ''}
-        ${n > 1 && (F.showPer || F.instPerExpr || F.instFirstExpr || F.instAprExpr || F.instFeeExpr) ? `<div class="frow ${F.active === 'iper' ? 'on' : ''}" onclick="setAct('iper')"><span class="lb" style="width:auto">每期金額（照銀行）</span><span class="vl" style="justify-content:flex-end;align-items:center;gap:8px"><b class="${F.instPerExpr ? '' : 'tx2'}">${F.instPerExpr ? sym + rawFmt(F.instPerExpr) : '沒填就平均拆'}</b>${F.instPerExpr ? `<button class="tx2" style="position:relative;z-index:2" onclick="event.stopPropagation();F.instPerExpr='';F.instFirstExpr='';F.active='amt';redraw('add')">${ic('x',14)}</button>` : ''}</span></div>` : ''}
+        ${n > 1 && (F.showPer || F.instPerExpr || F.instFirstExpr || F.instAprExpr || F.instFeeExpr) ? `<div class="frow ${F.active === 'iper' ? 'on' : ''}" onclick="setAct('iper')"><span class="lb" style="width:auto">每期金額（含利息，照銀行）</span><span class="vl" style="justify-content:flex-end;align-items:center;gap:8px"><b class="exp" style="font-weight:800">${F.instPerExpr ? sym + rawFmt(F.instPerExpr) : (amt > 0 && n > 1 ? fmt(Math.floor((amt + fee) / n), cur) : sym + '0')}</b>${F.instPerExpr ? `<button class="tx2" style="position:relative;z-index:2" onclick="event.stopPropagation();F.instPerExpr='';F.instFirstExpr='';F.instPerBank=false;F.perAuto=evalExpr(F.instAprExpr)>0;F.active='amt';redraw('add')">${ic('x',14)}</button>` : ''}</span></div>` : ''}
+        ${per > 0 ? `<div class="hint" style="margin:-4px 20px 8px">銀行每期金額優先；填寫年利率不會覆蓋已確認的金額。</div>` : ''}
         ${F.instPerExpr ? `<div class="frow ${F.active === 'ifirst' ? 'on' : ''}" onclick="setAct('ifirst')"><span class="lb" style="width:auto">首期金額</span><span class="vl" style="justify-content:flex-end;align-items:center;gap:8px"><b class="${F.instFirstExpr ? '' : 'tx2'}">${F.instFirstExpr ? sym + rawFmt(F.instFirstExpr) : '跟每期不同才填'}</b>${F.instFirstExpr ? `<button class="tx2" style="position:relative;z-index:2" onclick="event.stopPropagation();F.instFirstExpr='';F.active='amt';redraw('add')">${ic('x',14)}</button>` : ''}</span></div>` : ''}
         `;
       { const amt = evalExpr(F.amtExpr), fx = evalExpr(F.fxExpr);
@@ -1702,7 +1732,7 @@ function renderAdd(){
         ${sg.length ? `<div class="chips">${sg.map(n => `<button onmousedown="event.preventDefault()" onclick="document.activeElement&&document.activeElement.blur();this.closest('.layer').classList.remove('typing');F.store=${esc(JSON.stringify(n))};redraw('add')">${esc(n)}</button>`).join('')}</div>` : ''}`; })() : ''}
       <div class="frow"><span class="lb">專案</span><span class="vl"><b class="${pj ? '' : 'tx2'}">${pj ? esc(pj.name) : '無專案'}</b></span>${ic('down',16)}<select class="ov" onchange="setProj(this.value)">${projOpts()}</select></div>
       ${repeatRow}
-      <textarea class="note" rows="2" placeholder="備註" oninput="F.note=this.value" onfocus="typingOn(this)" onblur="typingOff(this)">${esc(F.note)}</textarea>
+      <textarea class="note" rows="2" placeholder="備註" oninput="F.note=this.value;fitNoteHeight(this)" onfocus="typingOn(this)" onblur="typingOff(this)">${esc(F.note)}</textarea>
       ${notes.length ? `<div class="chips">${notes.map(n => `<button onmousedown="event.preventDefault()" onclick="document.activeElement&&document.activeElement.blur();this.closest('.layer').classList.remove('typing');F.note=${esc(JSON.stringify(n))};redraw('add')">${esc(n)}</button>`).join('')}</div>` : ''}
     </div>
     <div class="kpw"><button class="kpdn" onclick="kpSet(true)" title="收起計算機（不存檔）">▼</button><div class="kp">${['7','8','9','÷','AC','4','5','6','×','⌫','1','2','3','-','00','0','.','+'].map(k => `<button class="${OPS.test(k) || k === '%' ? 'op' : ''}" onclick="key('${k}')">${k === '⌫' ? ic('back',22) : k === '-' ? '−' : k}</button>`).join('')}<button class="ok" onclick="saveTxn()">OK</button></div></div>
@@ -1714,6 +1744,22 @@ const zoomF = () => parseFloat(getComputedStyle(document.body).zoom) || 1;   // 
 document.addEventListener('click', e => { const m = e.target && e.target.closest && e.target.closest('div.row .mid'); if (m) m.classList.toggle('wrap'); });
 /* v2.21：電腦（滑鼠＋實體鍵盤）打字時不藏計算機；手機打字時藏計算機，鍵盤上方留「OK 存檔」條 */
 const DESK = (() => { try { return matchMedia('(hover:hover) and (pointer:fine)').matches; } catch (e) { return false; } })();
+
+/* 統一個人／家庭版備註自適應：支援輸入、刪除、舊記錄與子層重畫 */
+function fitNoteHeight(el){
+  if (!el || !el.classList || !el.classList.contains('note')) return;
+  const style = getComputedStyle(el);
+  const line = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.55 || 24;
+  const pad = (parseFloat(style.paddingTop)||0) + (parseFloat(style.paddingBottom)||0);
+  const border = (parseFloat(style.borderTopWidth)||0) + (parseFloat(style.borderBottomWidth)||0);
+  const floor = Math.ceil(line * 2 + pad + border);
+  const ceil = Math.ceil(line * 8 + pad + border);
+  el.style.height = 'auto';
+  const needed = Math.max(floor,el.scrollHeight + border);
+  el.style.height = Math.min(needed,ceil) + 'px';
+  el.style.overflowY = needed > ceil ? 'auto' : 'hidden';
+}
+
 function typingOn(el){ if (!DESK) el.closest('.layer')?.classList.add('typing'); }
 function typingOff(el){ setTimeout(() => { el.closest('.layer')?.classList.remove('typing'); }, 150); }
 (() => { const vv = window.visualViewport; if (!vv) return; let big = false;
@@ -1790,8 +1836,8 @@ function key(k){
   else { const seg = s.split(OPS).pop(); if (seg === '0') s = s.slice(0, -1) + k; else s += k; const dp = (s.split(OPS).pop().split('.')[1] || ''); if (dp.length > 2) return; }
   if (s.length > 40) return;
   F[f] = s; F.kpHide = false;
-  if (f === 'instPerExpr' || f === 'instFirstExpr') F.perAuto = false;
-  if (f === 'instAprExpr') F.perAuto = true;
+  if (f === 'instPerExpr' || f === 'instFirstExpr') { F.perAuto = false; F.instPerBank = true; }
+  if (f === 'instAprExpr') F.perAuto = !F.instPerBank;
   redraw('add');
 }
 /* v2.28：年利率 → 每期金額（本息平均攤還，月利率＝年利率÷12，四捨五入到整數） */
@@ -3926,7 +3972,7 @@ async function batchWrite(lref, data){
 }
 /* ---------- 秒開：把上次的資料存在手機裡，開 App 先顯示，再背景同步 ---------- */
 let AUTH_KNOWN = false, READY_ONCE = false;
-const SNAP_DB = 'money_v3_demo_snap' + STORE_NS;
+const SNAP_DB = 'money_snap' + STORE_NS;
 function idb(){ return new Promise((res, rej) => { const r = indexedDB.open(SNAP_DB, 1); r.onupgradeneeded = () => r.result.createObjectStore('kv'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }); }
 async function snapGet(){ try { const d = await idb(); return await new Promise(res => { const q = d.transaction('kv').objectStore('kv').get('snap'); q.onsuccess = () => res(q.result || null); q.onerror = () => res(null); }); } catch(e) { return null; } }
 let snapT;
@@ -4021,20 +4067,18 @@ function boot(){
     S.mode = 'local';
     const l = readLocal();
     if (l && l.data) { S.data = {accounts:{}, txns:{}, categories:{}, projects:{}, recurring:{}, templates:{}, plans:{}, ...l.data}; S.settings = {...S.settings, ...(l.settings || {})}; }
-    else {
-      $('#app').innerHTML = '<div class="empty" style="padding-top:25vh">正在載入五年展示資料…</div>';
-      demoSeed().then(() => { S.ready = true; bump(); applyTheme(); render(); afterReady(); })
-        .catch(err => { $('#app').innerHTML = '<div class="card" style="margin-top:20vh"><b>展示資料載入失敗</b><p>'+esc(err.message)+'</p><p>請確認 demo.json 與 index.html 已一起上傳。</p><button class="btn" onclick="location.reload()">重新載入</button></div>'; });
-      return;
-    }
+    else { S.data = defaultData(); saveLocal(); }
     S.ready = true; bump(); applyTheme(); render(); afterReady();
   }
-  if (!FEAT.demo) refreshRates();
+  refreshRates();
 }
 /* 返回：Android 返回鍵／手勢、瀏覽器上一頁、iPhone 主畫面 App 從左邊緣右滑 */
+let lastBackAt = 0;
 function canGoBack(){ return !LOCKED && (LAYERS.length > 0 || NAVSTK.length > 0 || S.ui.tab !== 'home'); }
 function goBack(fast){
   if (LOCKED) return false;
+  if (Date.now() - lastBackAt < 300) return true;
+  lastBackAt = Date.now();
   if (LAYERS.length) {
     const top = LAYERS[LAYERS.length - 1];
     if (top.key === 'add' && hasDraft() && !confirm('放棄這筆還沒存的紀錄？')) return true;
@@ -4053,24 +4097,25 @@ addEventListener('popstate', () => {
   else history.back();
 });
 (function(){
-  if (navigator.standalone !== true) return;
-  let x0 = null, y0 = null, target = null;
-  const reset = () => { x0 = y0 = target = null; };
+  // Safari 主畫面模式使用觸控右滑；一般瀏覽器和 Android 由系統返回鍵處理。
+  if (!(navigator.standalone === true || /iP(hone|ad|od)/.test(navigator.userAgent))) return;
+  let startX = null, startY = null;
+  const reset = () => { startX = startY = null; };
   addEventListener('touchstart', e => {
     if (e.touches.length !== 1 || !canGoBack()) return reset();
     const t = e.touches[0];
-    if (t.clientX > 28 || e.target.closest('input,textarea,select,[contenteditable],.kp')) return reset();
-    x0 = t.clientX; y0 = t.clientY; target = e.target;
+    if (t.clientX > 36 || e.target.closest('input,textarea,select,[contenteditable],.kp,[data-sw]')) return reset();
+    startX = t.clientX; startY = t.clientY;
   }, {passive:true});
   addEventListener('touchend', e => {
-    if (x0 === null || !canGoBack()) return reset();
-    const t = e.changedTouches[0], dx = t.clientX-x0, dy = Math.abs(t.clientY-y0);
+    if (startX === null || !canGoBack() || e.changedTouches.length !== 1) return reset();
+    const t = e.changedTouches[0], dx = t.clientX - startX, dy = Math.abs(t.clientY - startY);
     reset();
-    // 左緣開始的明確水平右滑才返回，與右上/左上返回鍵共用 goBack
-    if (dx >= 85 && dy < 60 && dx > dy*1.6) goBack();
+    // 手勢結束即時回上一層，避免額外的淡出等待；保留垂直捲動與輸入防誤觸。
+    if (dx >= 40 && dy < 60 && dx > dy * 1.6) goBack(true);
   }, {passive:true});
   addEventListener('touchcancel', reset, {passive:true});
-})();
+})();;
 
 /* 離開 App 再回來：回到首頁＋今天（停靠點）。正在記帳且已輸入內容時保留，避免資料遺失 */
 let awayAt = 0, BUSY_UNTIL = 0;
@@ -4088,7 +4133,7 @@ function backToDock(){
 }
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { awayAt = Date.now(); return; }
-  if (awayAt && Date.now() - awayAt >= (+P.dockAfter || 0) * 1000) backToDock();
+  if (awayAt && Date.now() - awayAt >= Math.max(5000, (+P.dockAfter || 0) * 1000) && !LAYERS.length && !NAVSTK.length && S.ui.tab === 'home') backToDock();
 });
 /* 隱藏主機商自動插入的浮動標籤（例如 Powered by Netlify），避免擋住下方按鈕 */
 (function(){
